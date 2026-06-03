@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 type Bindings = {
 	DB: D1Database;
 	KV: KVNamespace;
+	TURNSTILE_SECRET?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
@@ -73,8 +74,8 @@ app.post('/posts', async (c) => {
 	}
 
 	// 1. Verify Cloudflare Turnstile
-	// Note: Using the always-passes test secret key. User should swap with real secret in production.
-	const TURNSTILE_SECRET = '0x4AAAAAADeLbsxl7H09verhGAfv7ZIXGe8';
+	// Secret key loaded from Cloudflare Environment Variables.
+	const TURNSTILE_SECRET = c.env.TURNSTILE_SECRET || '1x0000000000000000000000000000000AA';
 	const turnstileFormData = new FormData();
 	turnstileFormData.append('secret', TURNSTILE_SECRET);
 	turnstileFormData.append('response', cf_turnstile_response);
