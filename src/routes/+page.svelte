@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Sun, Moon, Plus, Send, X, AlertCircle, CheckCircle2 } from 'lucide-svelte';
+	import { Sun, Moon, Plus, Send, X, AlertCircle, CheckCircle2, Loader2 } from 'lucide-svelte';
 	import PostCard from '$lib/components/PostCard.svelte';
 	import type { Post } from '$lib/utils';
 	import { cn } from '$lib/utils';
@@ -13,6 +13,11 @@
 	let replyingTo = $state<Post | null>(null);
 	let isComposing = $state(false);
 	let inputRef = $state<HTMLTextAreaElement | null>(null);
+
+	// Captcha Modal State
+	let isShowCaptchaModal = $state(false);
+	let captchaContainer = $state<HTMLDivElement | null>(null);
+	let turnstileWidgetId = $state<string | null>(null);
 
 	// Modal State
 	let modal = $state({ show: false, message: '', isError: true });
@@ -28,6 +33,34 @@
 			} else {
 				document.documentElement.classList.remove('dark');
 			}
+		}
+	});
+
+	// Render Turnstile explicitly when the modal appears
+	$effect(() => {
+		if (isShowCaptchaModal && captchaContainer && typeof (window as any).turnstile !== 'undefined' && !turnstileWidgetId) {
+			turnstileWidgetId = (window as any).turnstile.render(captchaContainer, {
+				sitekey: '0x4AAAAAADeLbquOg0U-I8Cd', // Site Key asli User
+				callback: (token: string) => {
+					if (isPendingSubmit) {
+						isShowCaptchaModal = false; // Sembunyikan popup captcha saat sukses
+						executePost(token);
+					}
+				},
+				'error-callback': () => {
+					showModal('Captcha verification failed. Please try again.', true);
+					isShowCaptchaModal = false;
+					isSubmitting = false;
+					isPendingSubmit = false;
+				},
+				theme: isDarkMode ? 'dark' : 'light'
+			});
+		}
+
+		// Cleanup widget jika modal ditutup (misalnya dibatalkan)
+		if (!isShowCaptchaModal && turnstileWidgetId && typeof (window as any).turnstile !== 'undefined') {
+			(window as any).turnstile.remove(turnstileWidgetId);
+			turnstileWidgetId = null;
 		}
 	});
 
@@ -70,9 +103,6 @@
 		} finally {
 			isSubmitting = false;
 			isPendingSubmit = false;
-			if (typeof (window as any).turnstile !== 'undefined') {
-				(window as any).turnstile.reset();
-			}
 		}
 	};
 
@@ -81,19 +111,6 @@
 			if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
 				isDarkMode = true;
 			}
-			(window as any).onTurnstileSuccess = (token: string) => {
-				if (isPendingSubmit) {
-					executePost(token);
-				}
-			};
-			(window as any).onTurnstileError = () => {
-				showModal('Captcha verification failed. Please try again.', true);
-				isSubmitting = false;
-				isPendingSubmit = false;
-				if (typeof (window as any).turnstile !== 'undefined') {
-					(window as any).turnstile.reset();
-				}
-			};
 		}
 		fetchPosts();
 		const interval = setInterval(fetchPosts, 30000);
@@ -123,15 +140,9 @@
 				return;
 			}
 
-			// 2. Jika lolos limit, jalankan Invisible Captcha
+			// 2. Jika lolos limit, buka Modal Captcha
 			isPendingSubmit = true;
-			if (typeof (window as any).turnstile !== 'undefined') {
-				(window as any).turnstile.execute();
-			} else {
-				showModal('Captcha is not loaded yet.', true);
-				isSubmitting = false;
-				isPendingSubmit = false;
-			}
+			isShowCaptchaModal = true;
 		} catch (err) {
 			console.error(err);
 			showModal('Network error occurred.', true);
@@ -178,13 +189,11 @@
 </script>
 
 <svelte:head>
-	<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+	<!-- Use render=explicit so we can manually control when to show it -->
+	<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </svelte:head>
 
-<!-- Invisible Turnstile Widget -->
-<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbquOg0U-I8Cd" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-execution="execute" data-size="invisible" data-theme={isDarkMode ? 'dark' : 'light'}></div>
-
-<!-- Global Modal Popup -->
+<!-- Global Message Modal Popup -->
 {#if modal.show}
 	<div class="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
 		<div class={cn(
@@ -199,6 +208,36 @@
 				<CheckCircle2 class="w-4 h-4" />
 			{/if}
 			{modal.message}
+		</div>
+	</div>
+{/if}
+
+<!-- Center Captcha Modal Overlay -->
+{#if isShowCaptchaModal}
+	<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20 dark:bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+		<div class="bg-white dark:bg-[#111] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-2xl flex flex-col items-center gap-4 animate-in zoom-in-95 duration-200">
+			<div class="flex items-center justify-between w-full">
+				<h3 class="text-sm font-semibold">Security Check</h3>
+				<button 
+					onclick={() => { 
+						isShowCaptchaModal = false; 
+						isSubmitting = false; 
+						isPendingSubmit = false; 
+					}} 
+					class="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors text-gray-500"
+				>
+					<X class="w-4 h-4" />
+				</button>
+			</div>
+			
+			<div class="min-h-[65px] min-w-[300px] flex items-center justify-center bg-gray-50 dark:bg-black rounded-lg border border-dashed border-gray-200 dark:border-gray-800">
+				<!-- Turnstile Widget akan di-render di dalam div ini -->
+				<div bind:this={captchaContainer}></div>
+			</div>
+			
+			<p class="text-xs text-gray-400 text-center px-4">
+				Please verify you are human before whispering to the void.
+			</p>
 		</div>
 	</div>
 {/if}
@@ -296,7 +335,11 @@
 						></textarea>
 
 						<button type="submit" disabled={!content.trim() || isSubmitting} class="flex-shrink-0 p-3 bg-black dark:bg-white text-white dark:text-black rounded-xl hover:opacity-80 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer mb-0.5" aria-label="Send whisper">
-							<Send class="w-4 h-4" />
+							{#if isSubmitting && !isShowCaptchaModal}
+								<Loader2 class="w-4 h-4 animate-spin" />
+							{:else}
+								<Send class="w-4 h-4" />
+							{/if}
 						</button>
 					</div>
 
