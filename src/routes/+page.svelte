@@ -276,7 +276,7 @@
 					<div class="flex items-center justify-between px-2">
 						<div class="scale-75 origin-left h-12">
 							<!-- Always-pass test key for Cloudflare Turnstile -->
-							<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbquOg0U-I8Cd" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-theme={isDarkMode ? 'dark' : 'light'}></div>
+							<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbsxl7H09verhGAfv7ZIXGe8" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-theme={isDarkMode ? 'dark' : 'light'}></div>
 						</div>
 						<div class="flex items-center gap-3">
 							<span class={cn('text-xs font-mono', content.length > 450 ? 'text-red-500' : 'text-gray-400')}>
