@@ -263,7 +263,7 @@
 						isComposing = true;
 						window.scrollTo({ top: 0, behavior: 'smooth' });
 					}}
-					class="bg-black text-white dark:bg-white text-black p-1.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer flex items-center justify-center"
+					class="bg-black text-white dark:bg-white dark:text-black p-1.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer flex items-center justify-center"
 					aria-label="New Post"
 				>
 					<Plus class="w-5 h-5" />
