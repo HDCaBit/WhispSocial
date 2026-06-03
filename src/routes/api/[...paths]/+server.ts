@@ -86,6 +86,9 @@ app.post('/posts', async (c) => {
 
 app.get('/posts', async (c) => {
 	try {
+		// Lazy cleanup: Hapus post kadaluarsa secara otomatis saat feed dimuat
+		c.env.DB.prepare("DELETE FROM posts WHERE expires_at <= datetime('now')").run().catch(console.error);
+
 		// Calculate Gravity Score in SQL and sort, then return
 		// Score = (UP - DOWN) / (Age in Hours + 2)^1.8
 		// Age in hours: (julianday('now') - julianday(created_at)) * 24
