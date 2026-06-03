@@ -5,5 +5,21 @@
 	"compatibility_flags": [
 		"nodejs_als"
 	],
-	"pages_build_output_dir": ".svelte-kit/cloudflare"
+	"pages_build_output_dir": ".svelte-kit/cloudflare",
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "whisp-db",
+			"database_id": "391d4879-de9c-4fe8-a5ae-498bf3ec22f4"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "KV",
+			"id": "750bdeead4c8414ebf6248780ede9e4d"
+		}
+	],
+	"triggers": {
+		"crons": ["0 * * * *"]
+	}
 }
