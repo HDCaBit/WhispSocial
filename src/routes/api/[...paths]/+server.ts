@@ -61,6 +61,24 @@ app.get('/identity', async (c) => {
 	});
 });
 
+app.get('/posts/check-limit', async (c) => {
+	const ip = getClientIp(c.req.raw);
+
+	const cooldownKey = `post_cooldown:${ip}`;
+	const hasCooldown = await c.env.KV.get(cooldownKey);
+	if (hasCooldown) {
+		return c.json({ allowed: false, reason: 'Chill out! You can only whisper once every 2.5 hours.' });
+	}
+
+	const dailyKey = `post_daily:${ip}`;
+	const dailyCountStr = await c.env.KV.get(dailyKey);
+	if (dailyCountStr && parseInt(dailyCountStr, 10) >= 10) {
+		return c.json({ allowed: false, reason: 'Daily limit reached. You can only whisper 10 times a day.' });
+	}
+
+	return c.json({ allowed: true });
+});
+
 app.post('/posts', async (c) => {
 	const body = await c.req.json().catch(() => ({}));
 	const { content, reply_to, cf_turnstile_response } = body;

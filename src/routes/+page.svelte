@@ -9,12 +9,10 @@
 	let content = $state('');
 	let isDarkMode = $state(false);
 	let isSubmitting = $state(false);
+	let isPendingSubmit = $state(false);
 	let replyingTo = $state<Post | null>(null);
 	let isComposing = $state(false);
 	let inputRef = $state<HTMLTextAreaElement | null>(null);
-
-	// Turnstile State
-	let turnstileToken = $state('');
 
 	// Modal State
 	let modal = $state({ show: false, message: '', isError: true });
@@ -43,17 +41,58 @@
 		}
 	};
 
+	const executePost = async (token: string) => {
+		try {
+			const res = await fetch('/api/posts', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					content,
+					reply_to: replyingTo?.id || null,
+					cf_turnstile_response: token
+				})
+			});
+			
+			const data = await res.json();
+			
+			if (res.ok) {
+				content = '';
+				replyingTo = null;
+				isComposing = false;
+				fetchPosts();
+				showModal('Whisper sent successfully!', false);
+			} else {
+				showModal(data.error || 'Failed to send whisper', true);
+			}
+		} catch (err) {
+			console.error(err);
+			showModal('Network error occurred.', true);
+		} finally {
+			isSubmitting = false;
+			isPendingSubmit = false;
+			if (typeof (window as any).turnstile !== 'undefined') {
+				(window as any).turnstile.reset();
+			}
+		}
+	};
+
 	onMount(() => {
 		if (typeof window !== 'undefined') {
 			if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
 				isDarkMode = true;
 			}
 			(window as any).onTurnstileSuccess = (token: string) => {
-				turnstileToken = token;
+				if (isPendingSubmit) {
+					executePost(token);
+				}
 			};
 			(window as any).onTurnstileError = () => {
-				turnstileToken = '';
 				showModal('Captcha verification failed. Please try again.', true);
+				isSubmitting = false;
+				isPendingSubmit = false;
+				if (typeof (window as any).turnstile !== 'undefined') {
+					(window as any).turnstile.reset();
+				}
 			};
 		}
 		fetchPosts();
@@ -70,47 +109,32 @@
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
 		if (!content.trim() || content.length > 500) return;
-		if (!turnstileToken) {
-			showModal('Please complete the captcha verification.', true);
-			return;
-		}
 		
 		isSubmitting = true;
+		
 		try {
-			const res = await fetch('/api/posts', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					content,
-					reply_to: replyingTo?.id || null,
-					cf_turnstile_response: turnstileToken
-				})
-			});
+			// 1. Cek Cooldown & Limit Kuota di Server terlebih dahulu
+			const limitRes = await fetch('/api/posts/check-limit');
+			const limitData = await limitRes.json();
 			
-			const data = await res.json();
-			
-			if (res.ok) {
-				content = '';
-				replyingTo = null;
-				isComposing = false;
-				turnstileToken = '';
-				// Reset turnstile widget
-				if (typeof (window as any).turnstile !== 'undefined') {
-					(window as any).turnstile.reset();
-				}
-				fetchPosts();
-				showModal('Whisper sent successfully!', false);
+			if (!limitData.allowed) {
+				showModal(limitData.reason, true);
+				isSubmitting = false;
+				return;
+			}
+
+			// 2. Jika lolos limit, jalankan Invisible Captcha
+			isPendingSubmit = true;
+			if (typeof (window as any).turnstile !== 'undefined') {
+				(window as any).turnstile.execute();
 			} else {
-				showModal(data.error || 'Failed to send whisper', true);
-				if (typeof (window as any).turnstile !== 'undefined') {
-					(window as any).turnstile.reset();
-				}
-				turnstileToken = '';
+				showModal('Captcha is not loaded yet.', true);
+				isSubmitting = false;
+				isPendingSubmit = false;
 			}
 		} catch (err) {
 			console.error(err);
 			showModal('Network error occurred.', true);
-		} finally {
 			isSubmitting = false;
 		}
 	};
@@ -157,6 +181,9 @@
 	<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </svelte:head>
 
+<!-- Invisible Turnstile Widget -->
+<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbsxl7H09verhGAfv7ZIXGe8" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-execution="execute" data-size="invisible" data-theme={isDarkMode ? 'dark' : 'light'}></div>
+
 <!-- Global Modal Popup -->
 {#if modal.show}
 	<div class="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
@@ -197,7 +224,7 @@
 						isComposing = true;
 						window.scrollTo({ top: 0, behavior: 'smooth' });
 					}}
-					class="bg-black text-white dark:bg-white dark:text-black p-1.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer flex items-center justify-center"
+					class="bg-black text-white dark:bg-white text-black p-1.5 rounded-full hover:opacity-80 transition-opacity cursor-pointer flex items-center justify-center"
 					aria-label="New Post"
 				>
 					<Plus class="w-5 h-5" />
@@ -268,16 +295,12 @@
 							}}
 						></textarea>
 
-						<button type="submit" disabled={!content.trim() || isSubmitting || !turnstileToken} class="flex-shrink-0 p-3 bg-black dark:bg-white text-white dark:text-black rounded-xl hover:opacity-80 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer mb-0.5" aria-label="Send whisper">
+						<button type="submit" disabled={!content.trim() || isSubmitting} class="flex-shrink-0 p-3 bg-black dark:bg-white text-white dark:text-black rounded-xl hover:opacity-80 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer mb-0.5" aria-label="Send whisper">
 							<Send class="w-4 h-4" />
 						</button>
 					</div>
 
-					<div class="flex items-center justify-between px-2">
-						<div class="scale-75 origin-left h-12">
-							<!-- Always-pass test key for Cloudflare Turnstile -->
-							<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbsxl7H09verhGAfv7ZIXGe8" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-theme={isDarkMode ? 'dark' : 'light'}></div>
-						</div>
+					<div class="flex items-center justify-end px-2">
 						<div class="flex items-center gap-3">
 							<span class={cn('text-xs font-mono', content.length > 450 ? 'text-red-500' : 'text-gray-400')}>
 								{content.length} / 500
