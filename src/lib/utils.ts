@@ -15,8 +15,8 @@ export function getCountdownValue(expiresAt: string) {
 	const h = Math.floor(diff / (1000 * 60 * 60));
 	const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
 
-	if (h > 0) return \`\${h}h \${m}m\`;
-	return \`\${m}m\`;
+	if (h > 0) return `${h}h ${m}m`;
+	return `${m}m`;
 }
 
 export interface Post {

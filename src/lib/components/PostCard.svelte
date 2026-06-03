@@ -14,7 +14,7 @@
 
 	let timeLeft = $state(getCountdownValue(post.expires_at));
 	let isSharing = $state(false);
-	let exportContainerRef: HTMLDivElement;
+	let exportContainerRef = $state<HTMLDivElement | null>(null);
 
 	$effect(() => {
 		const timer = setInterval(() => {
@@ -39,7 +39,7 @@
 
 			if (!blob) return;
 
-			const file = new File([blob], \`whisp-\${post.id}.png\`, {
+			const file = new File([blob], `whisp-${post.id}.png`, {
 				type: 'image/png'
 			});
 
@@ -51,10 +51,10 @@
 					});
 				} catch (err) {
 					console.log('Share failed, falling back to download', err);
-					downloadBlob(blob, \`whisp-\${post.id}.png\`);
+					downloadBlob(blob, `whisp-${post.id}.png`);
 				}
 			} else {
-				downloadBlob(blob, \`whisp-\${post.id}.png\`);
+				downloadBlob(blob, `whisp-${post.id}.png`);
 			}
 		} catch (err) {
 			console.error('Failed to share', err);
@@ -79,7 +79,7 @@
 	<div class="border border-gray-200 dark:border-gray-800 rounded-xl p-4 mb-4 shadow-sm bg-white dark:bg-[#0a0a0a] flex flex-col gap-3 relative">
 		<div class="flex justify-between items-start">
 			<div class="flex items-center gap-3">
-				<div class="w-8 h-8 rounded-full flex-shrink-0" style="background-color: {post.colorHex}" />
+				<div class="w-8 h-8 rounded-full flex-shrink-0" style="background-color: {post.colorHex}"></div>
 				<div class="font-semibold text-sm text-black dark:text-white">
 					<bdi>{post.author_name}</bdi>
 				</div>

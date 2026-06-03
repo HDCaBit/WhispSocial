@@ -1,4 +1,4 @@
-name = "whisp"
+name = "whisp-social"
 pages_build_output_dir = ".svelte-kit/cloudflare"
 compatibility_date = "2024-03-20"
 
@@ -6,12 +6,12 @@ compatibility_date = "2024-03-20"
 [[d1_databases]]
 binding = "DB"
 database_name = "whisp-db"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "391d4879-de9c-4fe8-a5ae-498bf3ec22f4"
 
 # KV Namespace Binding
 [[kv_namespaces]]
 binding = "KV"
-id = "00000000000000000000000000000000"
+id = "750bdeead4c8414ebf6248780ede9e4d"
 
 # Cron trigger for every hour
 [triggers]

@@ -11,7 +11,7 @@
 	let isSubmitting = $state(false);
 	let replyingTo = $state<Post | null>(null);
 	let isComposing = $state(false);
-	let inputRef: HTMLTextAreaElement;
+	let inputRef = $state<HTMLTextAreaElement | null>(null);
 
 	$effect(() => {
 		if (typeof document !== 'undefined') {
@@ -78,7 +78,7 @@
 
 	const handleInteract = async (id: string, action: 'up' | 'down') => {
 		try {
-			const res = await fetch(\`/api/posts/\${id}/interact\`, {
+			const res = await fetch(`/api/posts/${id}/interact`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ action })

@@ -135,7 +135,7 @@ app.post('/posts/:id/interact', async (c) => {
 	const ip = getClientIp(c.req.raw);
 	const { authorToken } = await generateBabelIdentity(ip);
 
-	const kvKey = \`interact:\${id}:\${authorToken}\`;
+	const kvKey = `interact:${id}:${authorToken}`;
 	
 	// Check rate limit in KV
 	const hasInteracted = await c.env.KV.get(kvKey);
@@ -153,11 +153,11 @@ app.post('/posts/:id/interact', async (c) => {
 		const upInc = action === 'up' ? 1 : 0;
 		const downInc = action === 'down' ? 1 : 0;
 
-		await c.env.DB.prepare(\`
+		await c.env.DB.prepare(`
 			UPDATE posts
 			SET up_count = up_count + ?, down_count = down_count + ?
 			WHERE id = ?
-		\`).bind(upInc, downInc, id).run();
+		`).bind(upInc, downInc, id).run();
 
 		// Record interaction with 24 hours expiration
 		await c.env.KV.put(kvKey, '1', { expirationTtl: 86400 });
