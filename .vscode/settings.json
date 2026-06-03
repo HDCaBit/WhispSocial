@@ -1,0 +1,6 @@
+{
+  "workbench.startupEditor": "readme",
+  "files.associations": {
+    "*.css": "tailwindcss"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Whisp",
+  "description": "A 100% anonymous, zero-login, ephemeral global social media platform where posts automatically delete after 24 hours.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
