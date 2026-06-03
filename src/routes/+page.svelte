@@ -182,7 +182,7 @@
 </svelte:head>
 
 <!-- Invisible Turnstile Widget -->
-<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbsxl7H09verhGAfv7ZIXGe8" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-execution="execute" data-size="invisible" data-theme={isDarkMode ? 'dark' : 'light'}></div>
+<div class="cf-turnstile" data-sitekey="0x4AAAAAADeLbquOg0U-I8Cd" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-execution="execute" data-size="invisible" data-theme={isDarkMode ? 'dark' : 'light'}></div>
 
 <!-- Global Modal Popup -->
 {#if modal.show}
