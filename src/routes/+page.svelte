@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Sun, Moon, Plus, Send, X } from 'lucide-svelte';
+	import { Sun, Moon, Plus, Send, X, AlertCircle, CheckCircle2 } from 'lucide-svelte';
 	import PostCard from '$lib/components/PostCard.svelte';
 	import type { Post } from '$lib/utils';
 	import { cn } from '$lib/utils';
@@ -12,6 +12,16 @@
 	let replyingTo = $state<Post | null>(null);
 	let isComposing = $state(false);
 	let inputRef = $state<HTMLTextAreaElement | null>(null);
+
+	// Turnstile State
+	let turnstileToken = $state('');
+
+	// Modal State
+	let modal = $state({ show: false, message: '', isError: true });
+	const showModal = (message: string, isError = true) => {
+		modal = { show: true, message, isError };
+		setTimeout(() => { modal.show = false; }, 4000);
+	};
 
 	$effect(() => {
 		if (typeof document !== 'undefined') {
@@ -38,6 +48,13 @@
 			if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
 				isDarkMode = true;
 			}
+			(window as any).onTurnstileSuccess = (token: string) => {
+				turnstileToken = token;
+			};
+			(window as any).onTurnstileError = () => {
+				turnstileToken = '';
+				showModal('Captcha verification failed. Please try again.', true);
+			};
 		}
 		fetchPosts();
 		const interval = setInterval(fetchPosts, 30000);
@@ -53,6 +70,11 @@
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
 		if (!content.trim() || content.length > 500) return;
+		if (!turnstileToken) {
+			showModal('Please complete the captcha verification.', true);
+			return;
+		}
+		
 		isSubmitting = true;
 		try {
 			const res = await fetch('/api/posts', {
@@ -60,17 +82,34 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					content,
-					reply_to: replyingTo?.id || null
+					reply_to: replyingTo?.id || null,
+					cf_turnstile_response: turnstileToken
 				})
 			});
+			
+			const data = await res.json();
+			
 			if (res.ok) {
 				content = '';
 				replyingTo = null;
 				isComposing = false;
+				turnstileToken = '';
+				// Reset turnstile widget
+				if (typeof (window as any).turnstile !== 'undefined') {
+					(window as any).turnstile.reset();
+				}
 				fetchPosts();
+				showModal('Whisper sent successfully!', false);
+			} else {
+				showModal(data.error || 'Failed to send whisper', true);
+				if (typeof (window as any).turnstile !== 'undefined') {
+					(window as any).turnstile.reset();
+				}
+				turnstileToken = '';
 			}
 		} catch (err) {
 			console.error(err);
+			showModal('Network error occurred.', true);
 		} finally {
 			isSubmitting = false;
 		}
@@ -83,6 +122,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ action })
 			});
+			
 			if (res.ok) {
 				posts = posts.map((p) => {
 					if (p.id === id) {
@@ -96,10 +136,11 @@
 				});
 			} else {
 				const err = await res.json();
-				alert(err.error || 'Cannot interact again');
+				showModal(err.error || 'Cannot interact again today', true);
 			}
 		} catch (err) {
 			console.error(err);
+			showModal('Network error occurred.', true);
 		}
 	};
 
@@ -111,6 +152,29 @@
 	const parents = $derived(posts.filter((p) => !p.reply_to));
 	const replies = $derived(posts.filter((p) => p.reply_to));
 </script>
+
+<svelte:head>
+	<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</svelte:head>
+
+<!-- Global Modal Popup -->
+{#if modal.show}
+	<div class="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
+		<div class={cn(
+			"flex items-center gap-2 px-4 py-3 rounded-full shadow-lg border backdrop-blur-md text-sm font-medium",
+			modal.isError 
+				? "bg-red-50/90 border-red-200 text-red-600 dark:bg-red-950/90 dark:border-red-900 dark:text-red-300" 
+				: "bg-emerald-50/90 border-emerald-200 text-emerald-600 dark:bg-emerald-950/90 dark:border-emerald-900 dark:text-emerald-300"
+		)}>
+			{#if modal.isError}
+				<AlertCircle class="w-4 h-4" />
+			{:else}
+				<CheckCircle2 class="w-4 h-4" />
+			{/if}
+			{modal.message}
+		</div>
+	</div>
+{/if}
 
 <div class="min-h-screen bg-white dark:bg-[#0a0a0a] text-black dark:text-white font-sans selection:bg-black selection:text-white dark:selection:bg-white dark:selection:text-black">
 	<!-- Sticky Header -->
@@ -204,26 +268,32 @@
 							}}
 						></textarea>
 
-						<button type="submit" disabled={!content.trim() || isSubmitting} class="flex-shrink-0 p-3 bg-black dark:bg-white text-white dark:text-black rounded-xl hover:opacity-80 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer mb-0.5" aria-label="Send whisper">
+						<button type="submit" disabled={!content.trim() || isSubmitting || !turnstileToken} class="flex-shrink-0 p-3 bg-black dark:bg-white text-white dark:text-black rounded-xl hover:opacity-80 transition-opacity disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer mb-0.5" aria-label="Send whisper">
 							<Send class="w-4 h-4" />
 						</button>
 					</div>
 
 					<div class="flex items-center justify-between px-2">
-						<span class={cn('text-xs font-mono', content.length > 450 ? 'text-red-500' : 'text-gray-400')}>
-							{content.length} / 500
-						</span>
-						<button
-							type="button"
-							onclick={() => {
-								isComposing = false;
-								replyingTo = null;
-								content = '';
-							}}
-							class="text-xs font-mono text-gray-500 hover:text-black dark:hover:text-white transition-colors cursor-pointer"
-						>
-							Cancel
-						</button>
+						<div class="scale-75 origin-left h-12">
+							<!-- Always-pass test key for Cloudflare Turnstile -->
+							<div class="cf-turnstile" data-sitekey="1x00000000000000000000AA" data-callback="onTurnstileSuccess" data-error-callback="onTurnstileError" data-theme={isDarkMode ? 'dark' : 'light'}></div>
+						</div>
+						<div class="flex items-center gap-3">
+							<span class={cn('text-xs font-mono', content.length > 450 ? 'text-red-500' : 'text-gray-400')}>
+								{content.length} / 500
+							</span>
+							<button
+								type="button"
+								onclick={() => {
+									isComposing = false;
+									replyingTo = null;
+									content = '';
+								}}
+								class="text-xs font-mono text-gray-500 hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+							>
+								Cancel
+							</button>
+						</div>
 					</div>
 				</form>
 			</div>

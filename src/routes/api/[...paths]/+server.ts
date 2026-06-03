@@ -62,13 +62,53 @@ app.get('/identity', async (c) => {
 
 app.post('/posts', async (c) => {
 	const body = await c.req.json().catch(() => ({}));
-	const { content, reply_to } = body;
+	const { content, reply_to, cf_turnstile_response } = body;
 	
 	if (!content || typeof content !== 'string' || content.length > 500 || content.trim().length === 0) {
 		return c.json({ error: 'Invalid post content (max 500 chars)' }, 400);
 	}
 
+	if (!cf_turnstile_response) {
+		return c.json({ error: 'Captcha validation missing' }, 400);
+	}
+
+	// 1. Verify Cloudflare Turnstile
+	// Note: Using the always-passes test secret key. User should swap with real secret in production.
+	const TURNSTILE_SECRET = '1x0000000000000000000000000000000AA';
+	const turnstileFormData = new FormData();
+	turnstileFormData.append('secret', TURNSTILE_SECRET);
+	turnstileFormData.append('response', cf_turnstile_response);
+
+	try {
+		const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+			method: 'POST',
+			body: turnstileFormData
+		});
+		const outcome = await result.json();
+		if (!outcome.success) {
+			return c.json({ error: 'Captcha verification failed' }, 403);
+		}
+	} catch (e) {
+		return c.json({ error: 'Captcha service unavailable' }, 500);
+	}
+
 	const ip = getClientIp(c.req.raw);
+
+	// 2. Check Cooldown (1 post per 2.5 hours per IP)
+	const cooldownKey = `post_cooldown:${ip}`;
+	const hasCooldown = await c.env.KV.get(cooldownKey);
+	if (hasCooldown) {
+		return c.json({ error: 'Chill out! You can only whisper once every 2.5 hours.' }, 429);
+	}
+
+	// 3. Check Daily Limit (10 posts per day per IP)
+	const dailyKey = `post_daily:${ip}`;
+	const dailyCountStr = await c.env.KV.get(dailyKey);
+	const dailyCount = dailyCountStr ? parseInt(dailyCountStr, 10) : 0;
+	if (dailyCount >= 10) {
+		return c.json({ error: 'Daily limit reached. You can only whisper 10 times a day.' }, 429);
+	}
+
 	const { authorName, authorToken } = await generateBabelIdentity(ip);
 	const id = nanoid(8);
 
@@ -77,6 +117,10 @@ app.post('/posts', async (c) => {
 			INSERT INTO posts (id, content, author_name, author_token, expires_at, reply_to)
 			VALUES (?, ?, ?, ?, datetime('now', '+1 day'), ?)
 		`).bind(id, content, authorName, authorToken, reply_to || null).run();
+
+		// Record Rate Limits in KV
+		await c.env.KV.put(cooldownKey, '1', { expirationTtl: 9000 }); // 2.5 hours = 9000 seconds
+		await c.env.KV.put(dailyKey, (dailyCount + 1).toString(), { expirationTtl: 86400 }); // 24 hours
 
 		return c.json({ success: true, id }, 201);
 	} catch (err) {
