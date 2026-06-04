@@ -66,7 +66,7 @@ function getOrCreateDeviceId(c: any) {
 			secure: true,
 			httpOnly: true,
 			sameSite: 'Strict',
-			maxAge: 60 * 60 * 24 * 365 * 10 // 10 years
+			maxAge: 60 * 60 * 24 * 365 // 1 year (Must be <= 400 days)
 		});
 	}
 	return deviceId;
