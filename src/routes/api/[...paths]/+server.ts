@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { nanoid } from 'nanoid';
 
 type Bindings = {
@@ -27,9 +28,10 @@ const NOUNS = [
 	'ظل', 'صدى', 'همس'
 ];
 
-async function generateBabelIdentity(ip: string) {
+async function generateBabelIdentity(uniqueId: string) {
+	// Identity rotates daily at 00:00 UTC
 	const dateString = new Date().toISOString().split('T')[0];
-	const msgBuffer = new TextEncoder().encode(ip + SECRET_SALT + dateString);
+	const msgBuffer = new TextEncoder().encode(uniqueId + SECRET_SALT + dateString);
 	const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
 	const hashArray = Array.from(new Uint8Array(hashBuffer));
 	const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
@@ -46,33 +48,65 @@ async function generateBabelIdentity(ip: string) {
 	return { authorToken: token, authorName, colorHex };
 }
 
-// Get Client IP in Cloudflare Workers
 function getClientIp(req: Request) {
 	return req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || 'unknown-ip';
 }
 
-app.get('/identity', async (c) => {
-	const ip = getClientIp(c.req.raw);
-	const identity = await generateBabelIdentity(ip);
+function getOrCreateDeviceId(c: any) {
+	let deviceId = getCookie(c, 'whisp_device_id');
+	if (!deviceId) {
+		deviceId = crypto.randomUUID();
+		setCookie(c, 'whisp_device_id', deviceId, {
+			path: '/',
+			secure: true,
+			httpOnly: true,
+			sameSite: 'Strict',
+			maxAge: 60 * 60 * 24 * 365 * 10 // 10 years
+		});
+	}
+	return deviceId;
+}
+
+app.get('/me', async (c) => {
+	const deviceId = getOrCreateDeviceId(c);
+	const identity = await generateBabelIdentity(deviceId);
+
+	const cooldownKeyDevice = `post_cooldown:${deviceId}`;
+	const cooldownExpireStr = await c.env.KV.get(cooldownKeyDevice);
+	const cooldownExpiresAt = cooldownExpireStr ? parseInt(cooldownExpireStr, 10) : null;
+
+	const dailyKeyDevice = `post_daily:${deviceId}`;
+	const dailyCountStr = await c.env.KV.get(dailyKeyDevice);
+	const dailyCount = dailyCountStr ? parseInt(dailyCountStr, 10) : 0;
+
 	return c.json({
 		name: identity.authorName,
 		color: identity.colorHex,
-		tokenHash: identity.authorToken.slice(0, 8)
+		dailyCount,
+		cooldownExpiresAt
 	});
 });
 
 app.get('/posts/check-limit', async (c) => {
 	const ip = getClientIp(c.req.raw);
+	const deviceId = getOrCreateDeviceId(c);
 
-	const cooldownKey = `post_cooldown:${ip}`;
-	const hasCooldown = await c.env.KV.get(cooldownKey);
-	if (hasCooldown) {
+	const cooldownKeyIP = `post_cooldown:${ip}`;
+	const cooldownKeyDevice = `post_cooldown:${deviceId}`;
+	
+	const hasCooldownIP = await c.env.KV.get(cooldownKeyIP);
+	const hasCooldownDevice = await c.env.KV.get(cooldownKeyDevice);
+	
+	if (hasCooldownIP || hasCooldownDevice) {
 		return c.json({ allowed: false, reason: 'Chill out! You can only whisper once every 2.5 hours.' });
 	}
 
-	const dailyKey = `post_daily:${ip}`;
-	const dailyCountStr = await c.env.KV.get(dailyKey);
-	if (dailyCountStr && parseInt(dailyCountStr, 10) >= 10) {
+	const dailyKeyIP = `post_daily:${ip}`;
+	const dailyKeyDevice = `post_daily:${deviceId}`;
+	const countIP = parseInt(await c.env.KV.get(dailyKeyIP) || '0', 10);
+	const countDevice = parseInt(await c.env.KV.get(dailyKeyDevice) || '0', 10);
+	
+	if (countIP >= 10 || countDevice >= 10) {
 		return c.json({ allowed: false, reason: 'Daily limit reached. You can only whisper 10 times a day.' });
 	}
 
@@ -92,7 +126,6 @@ app.post('/posts', async (c) => {
 	}
 
 	// 1. Verify Cloudflare Turnstile
-	// Secret key loaded from Cloudflare Environment Variables.
 	const TURNSTILE_SECRET = c.env.TURNSTILE_SECRET || '1x0000000000000000000000000000000AA';
 	const turnstileFormData = new FormData();
 	turnstileFormData.append('secret', TURNSTILE_SECRET);
@@ -112,23 +145,26 @@ app.post('/posts', async (c) => {
 	}
 
 	const ip = getClientIp(c.req.raw);
+	const deviceId = getOrCreateDeviceId(c);
 
-	// 2. Check Cooldown (1 post per 2.5 hours per IP)
-	const cooldownKey = `post_cooldown:${ip}`;
-	const hasCooldown = await c.env.KV.get(cooldownKey);
-	if (hasCooldown) {
+	// 2. Check Cooldown (Double Check)
+	const cooldownKeyIP = `post_cooldown:${ip}`;
+	const cooldownKeyDevice = `post_cooldown:${deviceId}`;
+	if ((await c.env.KV.get(cooldownKeyIP)) || (await c.env.KV.get(cooldownKeyDevice))) {
 		return c.json({ error: 'Chill out! You can only whisper once every 2.5 hours.' }, 429);
 	}
 
-	// 3. Check Daily Limit (10 posts per day per IP)
-	const dailyKey = `post_daily:${ip}`;
-	const dailyCountStr = await c.env.KV.get(dailyKey);
-	const dailyCount = dailyCountStr ? parseInt(dailyCountStr, 10) : 0;
-	if (dailyCount >= 10) {
+	// 3. Check Daily Limit (Double Check)
+	const dailyKeyIP = `post_daily:${ip}`;
+	const dailyKeyDevice = `post_daily:${deviceId}`;
+	const countIP = parseInt(await c.env.KV.get(dailyKeyIP) || '0', 10);
+	const countDevice = parseInt(await c.env.KV.get(dailyKeyDevice) || '0', 10);
+	
+	if (countIP >= 10 || countDevice >= 10) {
 		return c.json({ error: 'Daily limit reached. You can only whisper 10 times a day.' }, 429);
 	}
 
-	const { authorName, authorToken } = await generateBabelIdentity(ip);
+	const { authorName, authorToken } = await generateBabelIdentity(deviceId);
 	const id = nanoid(8);
 
 	try {
@@ -137,9 +173,14 @@ app.post('/posts', async (c) => {
 			VALUES (?, ?, ?, ?, datetime('now', '+1 day'), ?)
 		`).bind(id, content, authorName, authorToken, reply_to || null).run();
 
-		// Record Rate Limits in KV
-		await c.env.KV.put(cooldownKey, '1', { expirationTtl: 9000 }); // 2.5 hours = 9000 seconds
-		await c.env.KV.put(dailyKey, (dailyCount + 1).toString(), { expirationTtl: 86400 }); // 24 hours
+		// Record Rate Limits in KV (2.5 hours = 9000 seconds)
+		const expireTimeMs = Date.now() + (9000 * 1000); 
+		await c.env.KV.put(cooldownKeyDevice, expireTimeMs.toString(), { expirationTtl: 9000 });
+		await c.env.KV.put(cooldownKeyIP, expireTimeMs.toString(), { expirationTtl: 9000 });
+		
+		const newDailyCount = Math.max(countIP, countDevice) + 1;
+		await c.env.KV.put(dailyKeyDevice, newDailyCount.toString(), { expirationTtl: 86400 });
+		await c.env.KV.put(dailyKeyIP, newDailyCount.toString(), { expirationTtl: 86400 });
 
 		return c.json({ success: true, id }, 201);
 	} catch (err) {
@@ -149,12 +190,8 @@ app.post('/posts', async (c) => {
 
 app.get('/posts', async (c) => {
 	try {
-		// Lazy cleanup: Hapus post kadaluarsa secara otomatis saat feed dimuat
 		c.env.DB.prepare("DELETE FROM posts WHERE expires_at <= datetime('now')").run().catch(console.error);
 
-		// Calculate Gravity Score in SQL and sort, then return
-		// Score = (UP - DOWN) / (Age in Hours + 2)^1.8
-		// Age in hours: (julianday('now') - julianday(created_at)) * 24
 		const query = `
 			SELECT *, 
 			(up_count - down_count) / POW(MAX(0, (julianday('now') - julianday(created_at)) * 24) + 2, 1.8) as gravity_score
@@ -199,18 +236,16 @@ app.post('/posts/:id/interact', async (c) => {
 	}
 
 	const ip = getClientIp(c.req.raw);
-	const { authorToken } = await generateBabelIdentity(ip);
+	const deviceId = getOrCreateDeviceId(c);
 
-	const kvKey = `interact:${id}:${authorToken}`;
+	const kvKeyIP = `interact:${id}:${ip}`;
+	const kvKeyDevice = `interact:${id}:${deviceId}`;
 	
-	// Check rate limit in KV
-	const hasInteracted = await c.env.KV.get(kvKey);
-	if (hasInteracted) {
+	if ((await c.env.KV.get(kvKeyIP)) || (await c.env.KV.get(kvKeyDevice))) {
 		return c.json({ error: 'Already interacted with this post today' }, 403);
 	}
 
 	try {
-		// Check if post exists
 		const post = await c.env.DB.prepare('SELECT id FROM posts WHERE id = ?').bind(id).first();
 		if (!post) {
 			return c.json({ error: 'Post not found' }, 404);
@@ -226,7 +261,8 @@ app.post('/posts/:id/interact', async (c) => {
 		`).bind(upInc, downInc, id).run();
 
 		// Record interaction with 24 hours expiration
-		await c.env.KV.put(kvKey, '1', { expirationTtl: 86400 });
+		await c.env.KV.put(kvKeyDevice, '1', { expirationTtl: 86400 });
+		await c.env.KV.put(kvKeyIP, '1', { expirationTtl: 86400 });
 
 		return c.json({ success: true });
 	} catch (err) {

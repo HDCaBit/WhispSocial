@@ -14,6 +14,10 @@
 	let isComposing = $state(false);
 	let inputRef = $state<HTMLTextAreaElement | null>(null);
 
+	// User Identity & Limit State
+	let identity = $state<{ name: string; color: string; dailyCount: number; cooldownExpiresAt: number | null } | null>(null);
+	let timeToWait = $state<number | null>(null);
+
 	// Captcha Modal State
 	let isShowCaptchaModal = $state(false);
 	let captchaContainer = $state<HTMLDivElement | null>(null);
@@ -36,14 +40,62 @@
 		}
 	});
 
+	// Cooldown Countdown Timer
+	$effect(() => {
+		if (identity?.cooldownExpiresAt) {
+			const updateTimer = () => {
+				const now = Date.now();
+				const remaining = Math.max(0, Math.floor((identity!.cooldownExpiresAt! - now) / 1000));
+				if (remaining <= 0) {
+					timeToWait = null;
+					if (identity) identity.cooldownExpiresAt = null;
+				} else {
+					timeToWait = remaining;
+				}
+			};
+			updateTimer();
+			const interval = setInterval(updateTimer, 1000);
+			return () => clearInterval(interval);
+		} else {
+			timeToWait = null;
+		}
+	});
+
+	const formatTime = (seconds: number) => {
+		const h = Math.floor(seconds / 3600);
+		const m = Math.floor((seconds % 3600) / 60);
+		const s = seconds % 60;
+		if (h > 0) return `${h}h ${m}m ${s}s`;
+		return `${m}m ${s}s`;
+	};
+
+	const fetchIdentity = async () => {
+		try {
+			const res = await fetch('/api/me');
+			if (res.ok) identity = await res.json();
+		} catch (e) {
+			console.error('Failed to fetch identity', e);
+		}
+	};
+
+	const fetchPosts = async () => {
+		try {
+			const res = await fetch('/api/posts');
+			const data = await res.json();
+			if (res.ok) posts = data;
+		} catch (err) {
+			console.error('Failed to fetch posts', err);
+		}
+	};
+
 	// Render Turnstile explicitly when the modal appears
 	$effect(() => {
 		if (isShowCaptchaModal && captchaContainer && typeof (window as any).turnstile !== 'undefined' && !turnstileWidgetId) {
 			turnstileWidgetId = (window as any).turnstile.render(captchaContainer, {
-				sitekey: '0x4AAAAAADeLbquOg0U-I8Cd', // Site Key asli User
+				sitekey: '0x4AAAAAADeLbquOg0U-I8Cd',
 				callback: (token: string) => {
 					if (isPendingSubmit) {
-						isShowCaptchaModal = false; // Sembunyikan popup captcha saat sukses
+						isShowCaptchaModal = false; 
 						executePost(token);
 					}
 				},
@@ -57,22 +109,11 @@
 			});
 		}
 
-		// Cleanup widget jika modal ditutup (misalnya dibatalkan)
 		if (!isShowCaptchaModal && turnstileWidgetId && typeof (window as any).turnstile !== 'undefined') {
 			(window as any).turnstile.remove(turnstileWidgetId);
 			turnstileWidgetId = null;
 		}
 	});
-
-	const fetchPosts = async () => {
-		try {
-			const res = await fetch('/api/posts');
-			const data = await res.json();
-			if (res.ok) posts = data;
-		} catch (err) {
-			console.error('Failed to fetch posts', err);
-		}
-	};
 
 	const executePost = async (token: string) => {
 		try {
@@ -93,6 +134,7 @@
 				replyingTo = null;
 				isComposing = false;
 				fetchPosts();
+				fetchIdentity(); // Refresh limits & cooldown
 				showModal('Whisper sent successfully!', false);
 			} else {
 				showModal(data.error || 'Failed to send whisper', true);
@@ -112,6 +154,7 @@
 				isDarkMode = true;
 			}
 		}
+		fetchIdentity();
 		fetchPosts();
 		const interval = setInterval(fetchPosts, 30000);
 		return () => clearInterval(interval);
@@ -130,7 +173,6 @@
 		isSubmitting = true;
 		
 		try {
-			// 1. Cek Cooldown & Limit Kuota di Server terlebih dahulu
 			const limitRes = await fetch('/api/posts/check-limit');
 			const limitData = await limitRes.json();
 			
@@ -140,7 +182,6 @@
 				return;
 			}
 
-			// 2. Jika lolos limit, buka Modal Captcha
 			isPendingSubmit = true;
 			isShowCaptchaModal = true;
 		} catch (err) {
@@ -189,7 +230,6 @@
 </script>
 
 <svelte:head>
-	<!-- Use render=explicit so we can manually control when to show it -->
 	<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </svelte:head>
 
@@ -245,10 +285,28 @@
 <div class="min-h-screen bg-white dark:bg-[#0a0a0a] text-black dark:text-white font-sans selection:bg-black selection:text-white dark:selection:bg-white dark:selection:text-black">
 	<!-- Sticky Header -->
 	<header class="sticky top-0 z-10 backdrop-blur-md bg-white/80 dark:bg-black/80 border-b border-gray-100 dark:border-gray-900 px-4 py-3">
-		<div class="max-w-xl mx-auto w-full flex items-center justify-between">
-			<h1 class="text-xl font-bold font-mono tracking-tight lowercase flex items-center gap-2">
+		<div class="max-w-xl mx-auto w-full flex items-center justify-between relative">
+			<h1 class="text-xl font-bold font-mono tracking-tight lowercase">
 				whisp
 			</h1>
+
+			{#if identity}
+				<div class="absolute left-1/2 -translate-x-1/2 flex flex-col items-center justify-center pointer-events-none">
+					<span class="text-sm font-semibold truncate px-2" style="color: {identity.color}">
+						{identity.name}
+					</span>
+					<div class="flex items-center gap-1.5 text-[10px] font-mono mt-0.5 font-medium">
+						<span class={identity.dailyCount >= 10 ? "text-red-500" : "text-gray-500 dark:text-gray-400"}>
+							{10 - identity.dailyCount} / 10 left
+						</span>
+						{#if timeToWait}
+							<span class="text-gray-300 dark:text-gray-700">•</span>
+							<span class="text-red-500">cooldown: {formatTime(timeToWait)}</span>
+						{/if}
+					</div>
+				</div>
+			{/if}
+
 			<div class="flex items-center gap-4">
 				<button onclick={() => (isDarkMode = !isDarkMode)} class="text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white transition-colors cursor-pointer" aria-label="Toggle Theme">
 					{#if isDarkMode}
