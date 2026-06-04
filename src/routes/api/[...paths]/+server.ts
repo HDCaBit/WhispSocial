@@ -10,6 +10,11 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>().basePath('/api');
 
+app.onError((err, c) => {
+	console.error('Hono Error:', err);
+	return c.json({ error: err.message, stack: err.stack }, 500);
+});
+
 const SECRET_SALT = 'whisp-cloudflare-salt'; // In production, use env vars
 
 const EMOJIS = ['👻', '👽', '🤖', '🤠', '👾', '🤡', '👹', '👺', '🦉', '🦇'];
@@ -55,7 +60,7 @@ function getClientIp(req: Request) {
 function getOrCreateDeviceId(c: any) {
 	let deviceId = getCookie(c, 'whisp_device_id');
 	if (!deviceId) {
-		deviceId = crypto.randomUUID();
+		deviceId = nanoid(32);
 		setCookie(c, 'whisp_device_id', deviceId, {
 			path: '/',
 			secure: true,
